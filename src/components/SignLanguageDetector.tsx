@@ -1,11 +1,20 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
 import * as handpose from '@tensorflow-models/handpose';
 import { toast } from '@/components/ui/use-toast';
 
+// Define proper types for sign configurations
+interface SignConfig {
+  description: string;
+  fingersUp: number[];
+  curved?: boolean;
+  special?: string;
+}
+
 // Define more comprehensive ASL signs based on finger positions
-const signs = {
+const signs: Record<string, SignConfig> = {
   'A': { description: 'Fist with thumb pointing up', fingersUp: [1, 0, 0, 0, 0] },
   'B': { description: 'Flat hand with fingers together', fingersUp: [0, 1, 1, 1, 1] },
   'C': { description: 'Curved hand', fingersUp: [0, 1, 1, 1, 1], curved: true },
