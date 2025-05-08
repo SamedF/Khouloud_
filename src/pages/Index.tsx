@@ -1,11 +1,47 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+
+import React, { useState } from 'react';
+import SignLanguageDetector from '@/components/SignLanguageDetector';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 
 const Index = () => {
+  const [isDetecting, setIsDetecting] = useState(false);
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Welcome to Your Blank App</h1>
-        <p className="text-xl text-gray-600">Start building your amazing project here!</p>
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center py-8 px-4">
+      <header className="mb-8 text-center">
+        <h1 className="text-4xl font-bold mb-2 text-blue-400">Sign Language Detector</h1>
+        <p className="text-gray-400">Real-time sign language detection using your webcam</p>
+      </header>
+
+      <Card className="w-full max-w-3xl bg-gray-800 border-gray-700">
+        <CardHeader>
+          <CardTitle className="text-blue-400">Hand Sign Detection</CardTitle>
+          <CardDescription className="text-gray-400">
+            Position your hand in front of the camera to detect signs
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isDetecting ? (
+            <SignLanguageDetector />
+          ) : (
+            <div className="h-[350px] flex items-center justify-center bg-gray-900 rounded-md">
+              <p className="text-gray-500">Click Start Detection to activate the webcam</p>
+            </div>
+          )}
+        </CardContent>
+        <CardFooter className="flex justify-center">
+          <Button 
+            onClick={() => setIsDetecting(!isDetecting)}
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            {isDetecting ? "Stop Detection" : "Start Detection"}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      <div className="mt-8 text-center text-sm text-gray-500">
+        <p>Position your hand clearly in view of the camera for best results</p>
       </div>
     </div>
   );
