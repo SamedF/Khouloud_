@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
@@ -13,7 +12,7 @@ interface SignConfig {
   special?: string;
 }
 
-// Define more comprehensive ASL signs based on finger positions
+// Define comprehensive ASL signs for the complete alphabet
 const signs: Record<string, SignConfig> = {
   'A': { description: 'Fist with thumb pointing up', fingersUp: [1, 0, 0, 0, 0] },
   'B': { description: 'Flat hand with fingers together', fingersUp: [0, 1, 1, 1, 1] },
@@ -21,25 +20,73 @@ const signs: Record<string, SignConfig> = {
   'D': { description: 'Index finger up, thumb touches middle finger', fingersUp: [1, 1, 0, 0, 0] },
   'E': { description: 'Fingers curled, thumb across palm', fingersUp: [0, 0, 0, 0, 0], curved: true },
   'F': { description: 'Thumb and index finger form circle, other fingers up', fingersUp: [1, 1, 1, 1, 1], special: 'thumb-index-touch' },
+  'G': { description: 'Pointer finger and thumb extended horizontally', fingersUp: [1, 1, 0, 0, 0], special: 'g-shape' },
   'H': { description: 'Index and middle fingers extended side by side', fingersUp: [0, 1, 1, 0, 0] },
   'I': { description: 'Pinky finger extended', fingersUp: [0, 0, 0, 0, 1] },
+  'J': { description: 'Pinky extended and hand moves in J shape', fingersUp: [0, 0, 0, 0, 1], special: 'j-motion' },
+  'K': { description: 'Index, middle fingers up with thumb between them', fingersUp: [1, 1, 1, 0, 0], special: 'k-shape' },
   'L': { description: 'L-shape with thumb and index finger', fingersUp: [1, 1, 0, 0, 0] },
+  'M': { description: 'Three fingers over thumb', fingersUp: [0, 0, 0, 0, 0], special: 'm-shape' },
+  'N': { description: 'Index and middle fingers down over thumb', fingersUp: [0, 0, 0, 0, 0], special: 'n-shape' },
   'O': { description: 'Fingers form circle', fingersUp: [1, 1, 1, 1, 1], special: 'circle' },
+  'P': { description: 'Pointer finger down from thumb', fingersUp: [1, 1, 0, 0, 0], special: 'p-shape' },
+  'Q': { description: 'Thumb and index finger down', fingersUp: [1, 1, 0, 0, 0], special: 'q-shape' },
   'R': { description: 'Index and middle fingers crossed', fingersUp: [0, 1, 1, 0, 0], special: 'crossed' },
   'S': { description: 'Fist with thumb over fingers', fingersUp: [0, 0, 0, 0, 0] },
   'T': { description: 'Thumb between index and middle finger', fingersUp: [1, 0, 0, 0, 0], special: 'thumb-between' },
   'U': { description: 'Index and middle fingers extended together', fingersUp: [0, 1, 1, 0, 0] },
   'V': { description: 'Index and middle fingers in V shape', fingersUp: [0, 1, 1, 0, 0], special: 'v-shape' },
   'W': { description: 'Three fingers extended', fingersUp: [0, 1, 1, 1, 0] },
+  'X': { description: 'Index finger bent at middle joint', fingersUp: [0, 0, 0, 0, 0], special: 'x-shape' },
   'Y': { description: 'Thumb and pinky extended', fingersUp: [1, 0, 0, 0, 1] },
+  'Z': { description: 'Index finger draws Z shape', fingersUp: [0, 1, 0, 0, 0], special: 'z-motion' },
   'I love you': { description: 'Thumb, index, and pinky extended', fingersUp: [1, 1, 0, 0, 1] },
 };
 
-// Common words formed with signs
+// Expanded common words for conversations
 const commonWords = [
-  'HELLO', 'THANK YOU', 'PLEASE', 'SORRY',
-  'YES', 'NO', 'LOVE', 'FRIEND', 'HELP',
-  'GOOD', 'BAD', 'HOW', 'WHAT', 'WHERE'
+  // Greetings and basics
+  'HELLO', 'HI', 'GOODBYE', 'BYE', 'THANK YOU', 'PLEASE', 'SORRY', 
+  'YES', 'NO', 'OK', 'GOOD', 'BAD',
+  
+  // Questions
+  'WHAT', 'WHERE', 'WHEN', 'WHO', 'WHY', 'HOW',
+  
+  // People and relationships
+  'I', 'YOU', 'WE', 'THEY', 'MY', 'YOUR', 'NAME', 
+  'FRIEND', 'FAMILY', 'MOTHER', 'FATHER', 'SISTER', 'BROTHER',
+  
+  // Feelings and states
+  'LOVE', 'HAPPY', 'SAD', 'ANGRY', 'TIRED', 'SICK', 'FINE',
+  
+  // Actions
+  'HELP', 'WANT', 'NEED', 'GO', 'COME', 'LEARN', 'UNDERSTAND',
+  'EAT', 'DRINK', 'SLEEP', 'WORK', 'PLAY',
+  
+  // Time related
+  'NOW', 'LATER', 'TODAY', 'TOMORROW', 'YESTERDAY',
+  
+  // Common phrases
+  'NICE TO MEET YOU', 'HOW ARE YOU', 'I AM FINE',
+  'EXCUSE ME', 'I UNDERSTAND', 'I DONT UNDERSTAND',
+  'CAN YOU HELP ME', 'THANK YOU VERY MUCH'
+];
+
+// Phrases that combine multiple signs to form meaningful expressions
+const conversationPhrases = [
+  { text: 'HELLO HOW ARE YOU', meaning: 'Hello, how are you?' },
+  { text: 'MY NAME IS', meaning: 'My name is...' },
+  { text: 'NICE TO MEET YOU', meaning: 'Nice to meet you' },
+  { text: 'I DONT UNDERSTAND', meaning: "I don't understand" },
+  { text: 'CAN YOU HELP ME', meaning: 'Can you help me?' },
+  { text: 'I NEED HELP', meaning: 'I need help' },
+  { text: 'THANK YOU VERY MUCH', meaning: 'Thank you very much' },
+  { text: 'WHERE IS', meaning: 'Where is...?' },
+  { text: 'I AM FINE', meaning: 'I am fine' },
+  { text: 'I AM HAPPY', meaning: 'I am happy' },
+  { text: 'I AM SORRY', meaning: 'I am sorry' },
+  { text: 'SEE YOU TOMORROW', meaning: 'See you tomorrow' },
+  { text: 'I LOVE YOU', meaning: 'I love you' },
 ];
 
 const SignLanguageDetector = () => {
@@ -50,6 +97,7 @@ const SignLanguageDetector = () => {
   const [confidence, setConfidence] = useState<number>(0);
   const [signHistory, setSignHistory] = useState<string[]>([]);
   const [detectedWord, setDetectedWord] = useState<string>('');
+  const [detectedPhrase, setDetectedPhrase] = useState<string>('');
   
   // Track the last stable sign to prevent flickering
   const lastSignRef = useRef<string>('');
@@ -68,7 +116,6 @@ const SignLanguageDetector = () => {
         // Load the handpose model with correct configuration options
         const model = await handpose.load({
           detectionConfidence: 0.8
-          // The handpose model doesn't support maxNumHands
         });
         
         // Once model is loaded, start the detection loop
@@ -99,15 +146,31 @@ const SignLanguageDetector = () => {
     };
   }, []);
 
-  // Check for words in sign history
+  // Check for words and phrases in sign history
   useEffect(() => {
     if (signHistory.length === 0) return;
     
     // Look for common words in the sign sequence
     const currentSequence = signHistory.join('');
+    
+    // Check for phrases first (longer matches)
+    for (const phrase of conversationPhrases) {
+      if (currentSequence.endsWith(phrase.text)) {
+        setDetectedWord('');
+        setDetectedPhrase(phrase.meaning);
+        // Vibrate if available to give haptic feedback
+        if ('vibrate' in navigator) {
+          navigator.vibrate([100, 50, 100]);
+        }
+        return;
+      }
+    }
+    
+    // If no phrase detected, look for individual words
     for (const word of commonWords) {
       if (currentSequence.endsWith(word)) {
         setDetectedWord(word);
+        setDetectedPhrase('');
         // Vibrate if available to give haptic feedback
         if ('vibrate' in navigator) {
           navigator.vibrate(200);
@@ -193,27 +256,40 @@ const SignLanguageDetector = () => {
   
   // Function to detect special finger configurations
   const detectSpecialConfigurations = (landmarks: any[]) => {
-    // Detect thumb-index touch for F
     const thumbTip = landmarks[4];
     const indexTip = landmarks[8];
-    const distance = Math.sqrt(
+    const middleTip = landmarks[12];
+    const ringTip = landmarks[16];
+    const pinkyTip = landmarks[20];
+    
+    // Calculate distances between fingertips
+    const thumbIndexDistance = Math.sqrt(
       Math.pow(thumbTip[0] - indexTip[0], 2) + 
       Math.pow(thumbTip[1] - indexTip[1], 2) + 
       Math.pow(thumbTip[2] - indexTip[2], 2)
     );
     
-    const thumbIndexTouch = distance < 15;
     const indexMiddleSpread = Math.sqrt(
       Math.pow(landmarks[8][0] - landmarks[12][0], 2) + 
       Math.pow(landmarks[8][1] - landmarks[12][1], 2)
-    ) > 30;
+    );
     
     return {
-      'thumb-index-touch': thumbIndexTouch,
-      'v-shape': indexMiddleSpread,
+      'thumb-index-touch': thumbIndexDistance < 15,
+      'v-shape': indexMiddleSpread > 30,
       'circle': false, // Would need more complex calculation
       'crossed': false, // Challenging to detect without specialized logic
       'thumb-between': false, // Complex to detect reliably
+      // Additional special configurations for new letters
+      'g-shape': false,
+      'j-motion': false,
+      'k-shape': false,
+      'm-shape': false,
+      'n-shape': false,
+      'p-shape': false,
+      'q-shape': false,
+      'x-shape': false,
+      'z-motion': false
     };
   };
   
@@ -376,10 +452,11 @@ const SignLanguageDetector = () => {
     });
   };
 
-  // Function to clear the sign history and detected word
+  // Function to clear the sign history and detected word or phrase
   const clearSignHistory = () => {
     setSignHistory([]);
     setDetectedWord('');
+    setDetectedPhrase('');
     toast({
       title: "History cleared",
       description: "Start signing new words",
@@ -432,6 +509,13 @@ const SignLanguageDetector = () => {
           <div className="p-3 bg-green-900 bg-opacity-50 rounded-md animate-pulse">
             <p className="font-semibold">Word Detected:</p>
             <p className="text-2xl font-bold text-green-300">{detectedWord}</p>
+          </div>
+        )}
+        
+        {detectedPhrase && (
+          <div className="p-3 bg-purple-900 bg-opacity-50 rounded-md animate-pulse">
+            <p className="font-semibold">Phrase Detected:</p>
+            <p className="text-2xl font-bold text-purple-300">{detectedPhrase}</p>
           </div>
         )}
         
