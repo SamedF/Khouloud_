@@ -7,12 +7,33 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 const Index = () => {
   const [isDetecting, setIsDetecting] = useState(false);
 
+  // Expanded list of supported signs
   const supportedSigns = [
     { sign: 'A', description: 'Fist with thumb pointing up' },
     { sign: 'B', description: 'Flat hand with fingers together' },
     { sign: 'C', description: 'Curved hand' },
+    { sign: 'D', description: 'Index finger up, thumb touches middle finger' },
+    { sign: 'E', description: 'Fingers curled, thumb across palm' },
+    { sign: 'F', description: 'Thumb and index finger form circle, other fingers up' },
+    { sign: 'H', description: 'Index and middle fingers extended side by side' },
+    { sign: 'I', description: 'Pinky finger extended' },
+    { sign: 'L', description: 'L-shape with thumb and index finger' },
+    { sign: 'O', description: 'Fingers form circle' },
+    { sign: 'R', description: 'Index and middle fingers crossed' },
+    { sign: 'S', description: 'Fist with thumb over fingers' },
+    { sign: 'T', description: 'Thumb between index and middle finger' },
+    { sign: 'U', description: 'Index and middle fingers extended together' },
+    { sign: 'V', description: 'Index and middle fingers in V shape' },
+    { sign: 'W', description: 'Three fingers extended' },
     { sign: 'Y', description: 'Thumb and pinky extended' },
     { sign: 'I love you', description: 'Thumb, index, and pinky extended' },
+  ];
+
+  // List of supported words
+  const supportedWords = [
+    'HELLO', 'THANK YOU', 'PLEASE', 'SORRY',
+    'YES', 'NO', 'LOVE', 'FRIEND', 'HELP',
+    'GOOD', 'BAD', 'HOW', 'WHAT', 'WHERE'
   ];
 
   return (
@@ -26,7 +47,7 @@ const Index = () => {
         <CardHeader>
           <CardTitle className="text-blue-400">Hand Sign Detection</CardTitle>
           <CardDescription className="text-gray-400">
-            Position your hand in front of the camera to detect signs
+            Position your hand in front of the camera to detect signs and form words
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -64,9 +85,23 @@ const Index = () => {
         </div>
       </div>
 
+      <div className="mt-8 max-w-3xl w-full">
+        <h2 className="text-xl font-semibold mb-4 text-green-400">Supported Words</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          {supportedWords.map((word) => (
+            <Card key={word} className="bg-gray-800 border-gray-700">
+              <CardHeader className="py-2">
+                <CardTitle className="text-md text-center">{word}</CardTitle>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </div>
+
       <div className="mt-8 text-center text-sm text-gray-500">
         <p>Position your hand clearly in view of the camera for best results</p>
         <p className="mt-1">Hold each sign steady for better recognition</p>
+        <p className="mt-1">String multiple signs together to form words</p>
       </div>
     </div>
   );
