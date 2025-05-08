@@ -30,10 +30,11 @@ const SignLanguageDetector = () => {
         // Ensure TensorFlow is ready
         await tf.ready();
         
-        // Load the handpose model (using handpose instead of MediaPipe Hands directly)
+        // Load the handpose model with correct configuration options
+        // The handpose model doesn't support maxNumHands, so we remove it
         const model = await handpose.load({
-          detectionConfidence: 0.8,
-          maxNumHands: 1 // Only detect one hand for simplicity
+          detectionConfidence: 0.8
+          // Remove maxNumHands as it's not a valid option for this model
         });
         
         // Once model is loaded, start the detection loop
