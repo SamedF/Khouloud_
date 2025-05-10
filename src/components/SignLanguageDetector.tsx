@@ -3,6 +3,7 @@ import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
 import * as handpose from '@tensorflow-models/handpose';
 import { toast } from '@/components/ui/use-toast';
+import { Loader2 } from 'lucide-react';
 
 // Define proper types for sign configurations
 interface SignConfig {
@@ -98,6 +99,12 @@ const SignLanguageDetector = () => {
   const [signHistory, setSignHistory] = useState<string[]>([]);
   const [detectedWord, setDetectedWord] = useState<string>('');
   const [detectedPhrase, setDetectedPhrase] = useState<string>('');
+  const [permissionDenied, setPermissionDenied] = useState<boolean>(false);
+  const [modelError, setModelError] = useState<string>('');
+  
+  // Track model and detection loop
+  const handposeModel = useRef<handpose.HandPose | null>(null);
+  const requestAnimationRef = useRef<number | null>(null);
   
   // Track the last stable sign to prevent flickering
   const lastSignRef = useRef<string>('');
@@ -109,18 +116,30 @@ const SignLanguageDetector = () => {
     const loadModels = async () => {
       try {
         setIsModelLoading(true);
+        console.log("Starting model loading...");
         
         // Ensure TensorFlow is ready
         await tf.ready();
+        console.log("TensorFlow ready");
+        
+        // Set backend to WebGL for better performance
+        await tf.setBackend('webgl');
+        console.log("Backend set to WebGL");
         
         // Load the handpose model with correct configuration options
         const model = await handpose.load({
-          detectionConfidence: 0.8
+          detectionConfidence: 0.8,
+          maxContinuousChecks: 5,
+          iouThreshold: 0.3,
+          scoreThreshold: 0.75,
         });
+        
+        console.log("Handpose model loaded successfully");
+        handposeModel.current = model;
         
         // Once model is loaded, start the detection loop
         setIsModelLoading(false);
-        detectHands(model);
+        detectHands();
         
         toast({
           title: "Model loaded successfully",
@@ -128,6 +147,8 @@ const SignLanguageDetector = () => {
         });
       } catch (error) {
         console.error('Failed to load hand detection model:', error);
+        setModelError(error instanceof Error ? error.message : 'Unknown error');
+        setIsModelLoading(false);
         toast({
           title: "Error loading model",
           description: "Please check your connection and try again",
@@ -136,10 +157,27 @@ const SignLanguageDetector = () => {
       }
     };
     
-    loadModels();
+    // Check camera permissions before loading models
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(() => {
+        loadModels();
+      })
+      .catch((error) => {
+        console.error('Camera permission denied:', error);
+        setPermissionDenied(true);
+        setIsModelLoading(false);
+        toast({
+          title: "Camera access denied",
+          description: "Please allow camera access to use sign language detection",
+          variant: "destructive",
+        });
+      });
     
     return () => {
       // Cleanup function to prevent memory leaks
+      if (requestAnimationRef.current) {
+        cancelAnimationFrame(requestAnimationRef.current);
+      }
       setSignHistory([]);
       lastSignRef.current = '';
       stableCountRef.current = 0;
@@ -294,109 +332,120 @@ const SignLanguageDetector = () => {
   };
   
   // Function to detect hands and predict signs
-  const detectHands = async (model: handpose.HandPose) => {
+  const detectHands = async () => {
     if (
-      webcamRef.current && 
-      webcamRef.current.video && 
-      webcamRef.current.video.readyState === 4 &&
-      canvasRef.current
+      !handposeModel.current || 
+      !webcamRef.current || 
+      !webcamRef.current.video || 
+      webcamRef.current.video.readyState !== 4 ||
+      !canvasRef.current
     ) {
-      const video = webcamRef.current.video;
-      const canvas = canvasRef.current;
+      // If not ready yet, continue the detection loop
+      requestAnimationRef.current = requestAnimationFrame(detectHands);
+      return;
+    }
+    
+    const video = webcamRef.current.video;
+    const canvas = canvasRef.current;
+    
+    // Set canvas dimensions to match video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Detect hands in the video stream
+    try {
+      const hands = await handposeModel.current.estimateHands(video);
+      console.log("Hands detected:", hands.length > 0 ? "Yes" : "No");
       
-      // Set canvas dimensions to match video
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      
-      // Detect hands in the video stream
-      try {
-        const hands = await model.estimateHands(video);
+      // Process the hand data to identify signs
+      if (hands && hands.length > 0) {
+        const hand = hands[0]; // Using only the first detected hand
         
-        // Process the hand data to identify signs
-        if (hands && hands.length > 0) {
-          const hand = hands[0]; // Using only the first detected hand
+        // Get the finger states
+        const fingerStates = getFingerState(hand.landmarks);
+        const specialConfigurations = detectSpecialConfigurations(hand.landmarks);
+        
+        console.log("Finger states:", fingerStates);
+        
+        // Find the most similar sign
+        let bestMatch = '';
+        let bestScore = 0.5; // Increased threshold for better accuracy
+        
+        Object.entries(signs).forEach(([sign, config]) => {
+          // Start with basic finger position matching
+          let similarity = fingerStates.reduce((acc, state, idx) => {
+            return acc + (state === config.fingersUp[idx] ? 0.15 : 0);
+          }, 0);
           
-          // Get the finger states
-          const fingerStates = getFingerState(hand.landmarks);
-          const specialConfigurations = detectSpecialConfigurations(hand.landmarks);
-          
-          // Find the most similar sign
-          let bestMatch = '';
-          let bestScore = 0.5; // Increased threshold for better accuracy
-          
-          Object.entries(signs).forEach(([sign, config]) => {
-            // Start with basic finger position matching
-            let similarity = fingerStates.reduce((acc, state, idx) => {
-              return acc + (state === config.fingersUp[idx] ? 0.15 : 0);
-            }, 0);
-            
-            // Add bonus for special configurations if they match
-            if (config.special && specialConfigurations[config.special as keyof typeof specialConfigurations]) {
-              similarity += 0.25;
-            }
+          // Add bonus for special configurations if they match
+          if (config.special && specialConfigurations[config.special as keyof typeof specialConfigurations]) {
+            similarity += 0.25;
+          }
 
-            // Check for curved hand configuration if needed
-            if (config.curved) {
-              // This is a simplified check - would need more complex logic for full accuracy
-              // For now, we'll use the finger states as an approximation
-              const isCurved = fingerStates.reduce((sum, state) => sum + state, 0) > 2;
-              if (isCurved) similarity += 0.1;
-            }
-            
-            if (similarity > bestScore) {
-              bestScore = similarity;
-              bestMatch = sign;
-            }
-          });
+          // Check for curved hand configuration if needed
+          if (config.curved) {
+            // This is a simplified check - would need more complex logic for full accuracy
+            // For now, we'll use the finger states as an approximation
+            const isCurved = fingerStates.reduce((sum, state) => sum + state, 0) > 2;
+            if (isCurved) similarity += 0.1;
+          }
           
-          // Apply stability check to prevent flickering
-          if (bestMatch) {
-            if (bestMatch === lastSignRef.current) {
-              stableCountRef.current += 1;
-              if (stableCountRef.current >= STABILITY_THRESHOLD) {
-                if (detectedSign !== bestMatch) {
-                  setDetectedSign(bestMatch);
-                  setConfidence(bestScore);
-                  
-                  // Only add to history if it's a new sign (not just repeating)
-                  if (signHistory.length === 0 || signHistory[signHistory.length - 1] !== bestMatch) {
-                    setSignHistory(prev => {
-                      // Keep just the last 10 signs for word detection
-                      const updatedHistory = [...prev, bestMatch].slice(-10);
-                      return updatedHistory;
-                    });
-                  }
+          if (similarity > bestScore) {
+            bestScore = similarity;
+            bestMatch = sign;
+          }
+        });
+        
+        console.log("Best match:", bestMatch, "Score:", bestScore);
+        
+        // Apply stability check to prevent flickering
+        if (bestMatch) {
+          if (bestMatch === lastSignRef.current) {
+            stableCountRef.current += 1;
+            if (stableCountRef.current >= STABILITY_THRESHOLD) {
+              if (detectedSign !== bestMatch) {
+                setDetectedSign(bestMatch);
+                setConfidence(bestScore);
+                
+                // Only add to history if it's a new sign (not just repeating)
+                if (signHistory.length === 0 || signHistory[signHistory.length - 1] !== bestMatch) {
+                  setSignHistory(prev => {
+                    // Keep just the last 10 signs for word detection
+                    const updatedHistory = [...prev, bestMatch].slice(-10);
+                    return updatedHistory;
+                  });
                 }
               }
-            } else {
-              // Reset stability counter for new sign
-              lastSignRef.current = bestMatch;
-              stableCountRef.current = 1;
             }
           } else {
-            // No match found - might be transitioning between signs
-            stableCountRef.current = 0;
+            // Reset stability counter for new sign
+            lastSignRef.current = bestMatch;
+            stableCountRef.current = 1;
           }
-          
-          // Draw landmarks on canvas
-          drawHandLandmarks(hand.landmarks, canvas);
         } else {
-          // No hands detected
+          // No match found - might be transitioning between signs
           stableCountRef.current = 0;
-          
-          // Clear canvas if no hands detected
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-          }
         }
-      } catch (error) {
-        console.error('Error during hand detection:', error);
+        
+        // Draw landmarks on canvas
+        drawHandLandmarks(hand.landmarks, canvas);
+      } else {
+        // No hands detected
+        stableCountRef.current = 0;
+        
+        // Clear canvas if no hands detected
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
       }
-      
-      // Continue detection loop
-      requestAnimationFrame(() => detectHands(model));
+    } catch (error) {
+      console.error('Error during hand detection:', error);
+      // Don't stop the detection loop on error, just continue
     }
+    
+    // Continue detection loop
+    requestAnimationRef.current = requestAnimationFrame(detectHands);
   };
   
   // Function to draw hand landmarks on canvas
@@ -468,8 +517,32 @@ const SignLanguageDetector = () => {
       {isModelLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 z-10 rounded-md">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
+            <Loader2 className="animate-spin h-12 w-12 mx-auto text-blue-500" />
             <p className="mt-4">Loading detection model...</p>
+          </div>
+        </div>
+      )}
+      
+      {permissionDenied && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 z-10 rounded-md">
+          <div className="text-center p-6">
+            <p className="text-red-400 text-xl mb-4">⚠️ Camera access denied</p>
+            <p>Please allow camera access in your browser settings to use sign language detection.</p>
+          </div>
+        </div>
+      )}
+      
+      {modelError && !isModelLoading && !permissionDenied && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 z-10 rounded-md">
+          <div className="text-center p-6">
+            <p className="text-red-400 text-xl mb-4">⚠️ Error loading model</p>
+            <p className="mb-4">{modelError}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700"
+            >
+              Retry
+            </button>
           </div>
         </div>
       )}
@@ -478,6 +551,14 @@ const SignLanguageDetector = () => {
         <Webcam
           ref={webcamRef}
           muted
+          mirrored={true} {/* Mirror the webcam for more intuitive interaction */}
+          audio={false}
+          screenshotFormat="image/jpeg"
+          videoConstraints={{
+            facingMode: "user", 
+            width: 640,
+            height: 480
+          }}
           style={{
             position: 'absolute',
             width: '100%',
