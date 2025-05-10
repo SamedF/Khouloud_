@@ -551,7 +551,7 @@ const SignLanguageDetector = () => {
         <Webcam
           ref={webcamRef}
           muted
-          mirrored={true} {/* Mirror the webcam for more intuitive interaction */}
+          mirrored={true} /* Mirror the webcam for more intuitive interaction */
           audio={false}
           screenshotFormat="image/jpeg"
           videoConstraints={{
