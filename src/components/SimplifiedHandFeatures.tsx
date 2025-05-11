@@ -3,12 +3,30 @@ import React, { useRef, useEffect, useState } from 'react';
 import Webcam from 'react-webcam';
 import { toast } from "@/hooks/use-toast";
 
+// Types for hand gestures and features
+interface HandFeatures {
+  centroid: { x: number, y: number };
+  width: number;
+  height: number;
+  aspectRatio: number;
+  boundingBox: { left: number, right: number, top: number, bottom: number };
+  fingerCount?: number;
+}
+
+interface HandGesture {
+  name: string;
+  confidence: number;
+}
+
 // This component demonstrates a simplified approach to hand feature extraction
 // that would be more suitable for potential FPGA implementation
 const SimplifiedHandFeatures = () => {
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentGesture, setCurrentGesture] = useState<HandGesture | null>(null);
+  const [detectedLetters, setDetectedLetters] = useState<string[]>([]);
+  const [currentWord, setCurrentWord] = useState<string>('');
   const [detectionStats, setDetectionStats] = useState({
     framesProcessed: 0,
     handsDetected: 0,
@@ -21,7 +39,13 @@ const SimplifiedHandFeatures = () => {
     skinLowerHSV: [0, 0.15, 0.4],  // Lower HSV bounds for skin detection
     skinUpperHSV: [0.1, 0.7, 1.0], // Upper HSV bounds for skin detection
     blobMinSize: 1500,             // Minimum blob size to be considered a hand
+    gestureThreshold: 0.7,         // Confidence threshold for gesture recognition
   });
+
+  // Gesture history for stabilization
+  const gestureHistory = useRef<string[]>([]);
+  const maxHistoryLength = 10;
+  const stabilityCutoff = 0.6; // 60% agreement required for stable detection
 
   useEffect(() => {
     // Check webcam permission when component mounts
@@ -45,6 +69,15 @@ const SimplifiedHandFeatures = () => {
       setIsProcessing(false);
     };
   }, []);
+
+  // Effect for displaying detected letters as words
+  useEffect(() => {
+    if (detectedLetters.length > 0) {
+      // Join the detected letters to form a word
+      const word = detectedLetters.join('');
+      setCurrentWord(word);
+    }
+  }, [detectedLetters]);
 
   useEffect(() => {
     let processingInterval: NodeJS.Timeout | null = null;
@@ -173,9 +206,29 @@ const SimplifiedHandFeatures = () => {
       if (handRegion.size > thresholds.blobMinSize) {
         const features = calculateHandFeatures(handRegion, canvas.width, canvas.height);
         
+        // Identify gesture based on geometric features
+        const gesture = identifyGesture(features);
+        
+        // Update gesture history for stabilization
+        if (gesture) {
+          updateGestureHistory(gesture.name);
+          setCurrentGesture(gesture);
+          
+          // Add to detected letters if stable
+          const stableGesture = getStableGesture();
+          if (stableGesture && 
+              (detectedLetters.length === 0 || 
+               detectedLetters[detectedLetters.length - 1] !== stableGesture)) {
+            setDetectedLetters(prev => [...prev, stableGesture]);
+          }
+        }
+        
         // Visualize the extracted features
-        visualizeFeatures(ctx, handRegion, features);
+        visualizeFeatures(ctx, handRegion, features, gesture);
         return true;
+      } else {
+        // Reset current gesture when no hand is detected
+        setCurrentGesture(null);
       }
       
       // No hand detected, clear the canvas
@@ -183,6 +236,40 @@ const SimplifiedHandFeatures = () => {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
     return false;
+  };
+  
+  // Update gesture history and maintain limited size
+  const updateGestureHistory = (gestureName: string) => {
+    if (gestureHistory.current.length >= maxHistoryLength) {
+      gestureHistory.current.shift();
+    }
+    gestureHistory.current.push(gestureName);
+  };
+  
+  // Get the most stable gesture from history
+  const getStableGesture = (): string | null => {
+    if (gestureHistory.current.length < 5) return null;
+    
+    // Count occurrences of each gesture
+    const counts: {[key: string]: number} = {};
+    gestureHistory.current.forEach(g => {
+      counts[g] = (counts[g] || 0) + 1;
+    });
+    
+    // Find the most common gesture
+    let maxCount = 0;
+    let stableGesture: string | null = null;
+    
+    Object.entries(counts).forEach(([gesture, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        stableGesture = gesture;
+      }
+    });
+    
+    // Check if it meets stability threshold
+    const stability = maxCount / gestureHistory.current.length;
+    return stability >= stabilityCutoff ? stableGesture : null;
   };
   
   // Simple spatial filter for denoising (equivalent to erosion/dilation)
@@ -283,18 +370,152 @@ const SimplifiedHandFeatures = () => {
       bottom = Math.max(bottom, y);
     }
     
+    // Calculate the hull using a simplified convex hull algorithm
+    const hull = calculateSimplifiedHull(handRegion, width);
+    
+    // Estimate number of extended fingers based on hull geometry
+    const fingerCount = estimateFingerCount(handRegion, hull, width);
+    
     // Calculate geometric features - these would be the outputs from an FPGA implementation
     return {
       centroid: handRegion.centroid,
       width: right - left,
       height: bottom - top,
       aspectRatio: (right - left) / (bottom - top),
-      boundingBox: { left, right, top, bottom }
+      boundingBox: { left, right, top, bottom },
+      fingerCount
     };
+  };
+
+  // Simple convex hull estimation for finger detection
+  const calculateSimplifiedHull = (
+    handRegion: { pixels: number[], size: number, centroid: { x: number, y: number } }, 
+    width: number
+  ) => {
+    // This is a simplified approximation that would be hardware-friendly
+    // Instead of computing a full convex hull, we'll just find points that are 
+    // far from the centroid in different directions
+    
+    const { centroid } = handRegion;
+    const points: Array<{x: number, y: number, distance: number}> = [];
+    
+    // Sample from the hand region pixels
+    for (const pixelIdx of handRegion.pixels) {
+      // Only sample every 10th pixel for efficiency
+      if (pixelIdx % 10 !== 0) continue;
+      
+      const x = pixelIdx % width;
+      const y = Math.floor(pixelIdx / width);
+      
+      // Calculate distance from centroid
+      const dx = x - centroid.x;
+      const dy = y - centroid.y;
+      const distance = Math.sqrt(dx*dx + dy*dy);
+      
+      points.push({ x, y, distance });
+    }
+    
+    // Sort by distance
+    points.sort((a, b) => b.distance - a.distance);
+    
+    // Take the top 20 points as our simplified hull
+    return points.slice(0, 20);
+  };
+  
+  // Estimate finger count based on hand geometry
+  const estimateFingerCount = (
+    handRegion: { pixels: number[], size: number, centroid: { x: number, y: number } }, 
+    hull: Array<{x: number, y: number, distance: number}>,
+    width: number
+  ) => {
+    // A simplified algorithm to estimate extended fingers
+    // Actual FPGAs would use more sophisticated but still hardware-friendly methods
+    
+    // If the hull points are clustered in distinct groups far from the centroid,
+    // those are likely fingers
+    
+    // Get the top 30% points by distance
+    const farPoints = hull.slice(0, Math.ceil(hull.length * 0.3));
+    
+    // Group these points by angle from centroid 
+    // This is simplified finger detection that's feasible in hardware
+    const angleGroups: {[key: string]: number} = {};
+    const { centroid } = handRegion;
+    
+    for (const point of farPoints) {
+      const dx = point.x - centroid.x;
+      const dy = point.y - centroid.y;
+      
+      // Calculate angle in degrees (0-360)
+      let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      if (angle < 0) angle += 360;
+      
+      // Quantize to 30 degree bins
+      const bin = Math.floor(angle / 30);
+      
+      // Count points in each angle bin
+      angleGroups[bin] = (angleGroups[bin] || 0) + 1;
+    }
+    
+    // Count angle groups with more than 1 point
+    // These are likely extended fingers
+    const possibleFingers = Object.values(angleGroups)
+      .filter(count => count > 1)
+      .length;
+    
+    // Adjust based on hand area and aspect ratio to estimate final count
+    return Math.min(Math.max(1, possibleFingers), 5);
+  };
+  
+  // Map from finger count to ASL letter estimation
+  const identifyGesture = (features: HandFeatures): HandGesture | null => {
+    const { fingerCount, aspectRatio, width, height } = features;
+    
+    if (!fingerCount) return null;
+    
+    // Very basic gesture mapping based on finger count and aspect ratio
+    // This could be implemented as a simple lookup table in hardware
+    if (fingerCount === 1) {
+      // Could be A, E, M, N, S, T
+      if (aspectRatio < 0.8) {
+        return { name: 'A', confidence: 0.7 };
+      } else {
+        return { name: 'D', confidence: 0.6 };
+      }
+    } else if (fingerCount === 2) {
+      // Could be H, K, L, P, R, U, V, X
+      if (aspectRatio > 1.2) {
+        return { name: 'L', confidence: 0.8 };
+      } else if (aspectRatio < 0.9) {
+        return { name: 'K', confidence: 0.7 };
+      } else {
+        return { name: 'V', confidence: 0.75 };
+      }
+    } else if (fingerCount === 3) {
+      // Could be F, W
+      return { name: 'W', confidence: 0.8 };
+    } else if (fingerCount === 4) {
+      // Could be B
+      return { name: 'B', confidence: 0.85 };
+    } else if (fingerCount === 5) {
+      // Could be I, Y
+      if (width > height * 1.2) {
+        return { name: 'Y', confidence: 0.9 };
+      } else {
+        return { name: 'I LOVE YOU', confidence: 0.8 };
+      }
+    }
+    
+    return { name: '?', confidence: 0.5 };
   };
   
   // Visualize the extracted features
-  const visualizeFeatures = (ctx: CanvasRenderingContext2D, handRegion: { pixels: number[], size: number, centroid: { x: number, y: number } }, features: any) => {
+  const visualizeFeatures = (
+    ctx: CanvasRenderingContext2D, 
+    handRegion: { pixels: number[], size: number, centroid: { x: number, y: number } }, 
+    features: HandFeatures, 
+    gesture: HandGesture | null
+  ) => {
     const { width, height } = ctx.canvas;
     
     // Reset canvas
@@ -337,6 +558,18 @@ const SimplifiedHandFeatures = () => {
     ctx.fillText(`Height: ${Math.round(features.height)}px`, 10, 50);
     ctx.fillText(`Aspect ratio: ${features.aspectRatio.toFixed(2)}`, 10, 70);
     ctx.fillText(`Area: ${handRegion.size}px`, 10, 90);
+    
+    // Display finger count estimation
+    if (features.fingerCount !== undefined) {
+      ctx.fillText(`Est. fingers: ${features.fingerCount}`, 10, 110);
+    }
+    
+    // Display detected gesture
+    if (gesture) {
+      ctx.font = '24px sans-serif';
+      ctx.fillStyle = 'yellow';
+      ctx.fillText(`${gesture.name} (${Math.round(gesture.confidence * 100)}%)`, 10, 140);
+    }
   };
 
   // Reset detection parameters to defaults
@@ -345,7 +578,11 @@ const SimplifiedHandFeatures = () => {
       skinLowerHSV: [0, 0.15, 0.4],
       skinUpperHSV: [0.1, 0.7, 1.0],
       blobMinSize: 1500,
+      gestureThreshold: 0.7,
     });
+    setDetectedLetters([]);
+    setCurrentWord('');
+    gestureHistory.current = [];
   };
 
   // Adjust for different lighting conditions
@@ -356,6 +593,7 @@ const SimplifiedHandFeatures = () => {
           skinLowerHSV: [0, 0.1, 0.5],
           skinUpperHSV: [0.1, 0.5, 1.0],
           blobMinSize: 1500,
+          gestureThreshold: 0.7,
         });
         break;
       case 'dim':
@@ -363,6 +601,7 @@ const SimplifiedHandFeatures = () => {
           skinLowerHSV: [0, 0.2, 0.3],
           skinUpperHSV: [0.15, 0.8, 0.9],
           blobMinSize: 1200,
+          gestureThreshold: 0.6,
         });
         break;
       default:
@@ -394,6 +633,27 @@ const SimplifiedHandFeatures = () => {
             objectFit: 'cover',
           }}
         />
+        
+        {/* Word display overlay */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 bg-black bg-opacity-50">
+          <div className="flex justify-between items-center">
+            <div>
+              {currentGesture && (
+                <span className="text-xl font-bold text-yellow-400 mr-4">
+                  {currentGesture.name}
+                </span>
+              )}
+            </div>
+            <div className="text-right">
+              <span className="text-lg font-semibold text-gray-300">
+                Detected: 
+              </span>
+              <span className="text-xl font-bold text-white ml-2">
+                {currentWord || '...'}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
       
       <div className="mt-4 space-y-4">
@@ -407,6 +667,16 @@ const SimplifiedHandFeatures = () => {
               className={`px-4 py-2 rounded ${isProcessing ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} text-white`}
             >
               {isProcessing ? 'Pause Processing' : 'Start Processing'}
+            </button>
+            <button
+              onClick={() => {
+                setDetectedLetters([]);
+                setCurrentWord('');
+                gestureHistory.current = [];
+              }}
+              className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded"
+            >
+              Clear Word
             </button>
             <button
               onClick={resetParameters}
@@ -462,22 +732,28 @@ const SimplifiedHandFeatures = () => {
         </div>
         
         <div className="bg-gray-800 p-4 rounded-md">
+          <p className="text-gray-300 mb-2">Detected Signs:</p>
+          <div className="flex flex-wrap gap-2">
+            {detectedLetters.map((letter, index) => (
+              <div key={index} className="bg-blue-700 px-3 py-1 rounded text-white font-bold">
+                {letter}
+              </div>
+            ))}
+            {detectedLetters.length === 0 && (
+              <p className="text-gray-400">No signs detected yet</p>
+            )}
+          </div>
+        </div>
+        
+        <div className="bg-gray-800 p-4 rounded-md">
           <p className="text-gray-300 mb-2">Key Features for FPGA Implementation:</p>
           <ul className="list-disc pl-5 text-gray-400">
             <li>Simple color-based segmentation (easily translatable to hardware)</li>
             <li>Spatial filtering with fixed-size kernels (implementable as pipeline)</li>
             <li>Connected component analysis (can be optimized for hardware)</li>
             <li>Geometric feature extraction (parallel computation in FPGA)</li>
-          </ul>
-        </div>
-        
-        <div className="bg-gray-800 p-4 rounded-md">
-          <p className="text-gray-300 mb-2">FPGA Implementation Notes:</p>
-          <ul className="list-disc pl-5 text-gray-400">
-            <li>Image processing algorithms can be pipelined for parallel execution</li>
-            <li>Fixed-point arithmetic would replace floating-point operations</li>
-            <li>Algorithm relies on simple thresholds rather than neural networks</li>
-            <li>Output features could feed into a simple classifier (HLS or RTL)</li>
+            <li>Simplified finger counting algorithm (implementable with angle binning)</li>
+            <li>Basic gesture recognition via lookup table (low complexity)</li>
           </ul>
         </div>
       </div>
@@ -486,4 +762,3 @@ const SimplifiedHandFeatures = () => {
 };
 
 export default SimplifiedHandFeatures;
-
