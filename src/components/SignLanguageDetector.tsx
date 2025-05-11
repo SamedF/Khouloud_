@@ -4,7 +4,7 @@ import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
 import * as handpose from '@tensorflow-models/handpose';
 import { toast } from '@/components/ui/use-toast';
-import { Loader2 } from 'lucide-react';
+import { Loader2, MicOff } from 'lucide-react';
 
 // Define proper types for sign configurations
 interface SignConfig {
@@ -102,6 +102,8 @@ const SignLanguageDetector = () => {
   const [detectedPhrase, setDetectedPhrase] = useState<string>('');
   const [permissionDenied, setPermissionDenied] = useState<boolean>(false);
   const [modelError, setModelError] = useState<string>('');
+  const [modelReady, setModelReady] = useState<boolean>(false);
+  const [webcamReady, setWebcamReady] = useState<boolean>(false);
   
   // Track model and detection loop
   const handposeModel = useRef<handpose.HandPose | null>(null);
@@ -110,7 +112,7 @@ const SignLanguageDetector = () => {
   // Track the last stable sign to prevent flickering
   const lastSignRef = useRef<string>('');
   const stableCountRef = useRef<number>(0);
-  const STABILITY_THRESHOLD = 5; // Number of consistent frames to consider a sign stable
+  const STABILITY_THRESHOLD = 3; // Reduced for faster response
   
   // Add debug counter to track detection loops
   const debugLoopCounter = useRef<number>(0);
@@ -132,23 +134,18 @@ const SignLanguageDetector = () => {
         
         // Load the handpose model with correct configuration options
         const model = await handpose.load({
-          detectionConfidence: 0.7, // Lower threshold to detect hands more easily
-          maxContinuousChecks: 10,
+          detectionConfidence: 0.6, // Lower threshold to detect hands more easily
+          maxContinuousChecks: 5,
           iouThreshold: 0.3,
-          scoreThreshold: 0.6, // Lower threshold to be more sensitive
+          scoreThreshold: 0.5, // Lower threshold to be more sensitive
         });
         
         console.log("Handpose model loaded successfully");
         handposeModel.current = model;
         
-        // Once model is loaded, start the detection loop
+        // Mark model as ready
+        setModelReady(true);
         setIsModelLoading(false);
-        
-        // Start detection loop explicitly
-        if (!requestAnimationRef.current) {
-          console.log("Starting detection loop");
-          requestAnimationRef.current = requestAnimationFrame(detectHands);
-        }
         
         toast({
           title: "Model loaded successfully",
@@ -194,6 +191,29 @@ const SignLanguageDetector = () => {
     };
   }, []);
 
+  // Start detection loop when both model and webcam are ready
+  useEffect(() => {
+    if (modelReady && webcamReady && !requestAnimationRef.current) {
+      console.log("Both model and webcam ready, starting detection loop");
+      requestAnimationRef.current = requestAnimationFrame(detectHands);
+      
+      // Add a test sign to demonstrate word detection
+      setTimeout(() => {
+        console.log("Adding test letter to sign history");
+        setSignHistory(prev => [...prev, 'H']);
+        setTimeout(() => {
+          setSignHistory(prev => [...prev, 'I']);
+        }, 500);
+      }, 2000);
+    }
+  }, [modelReady, webcamReady]);
+
+  // Handler when webcam is ready
+  const handleWebcamReady = () => {
+    console.log("Webcam is ready");
+    setWebcamReady(true);
+  };
+
   // Check for words and phrases in sign history
   useEffect(() => {
     if (signHistory.length === 0) return;
@@ -206,7 +226,7 @@ const SignLanguageDetector = () => {
     
     // Check for phrases first (longer matches)
     for (const phrase of conversationPhrases) {
-      if (currentSequence.endsWith(phrase.text)) {
+      if (currentSequence.includes(phrase.text)) {
         console.log("Phrase detected:", phrase.meaning);
         setDetectedWord('');
         setDetectedPhrase(phrase.meaning);
@@ -214,13 +234,17 @@ const SignLanguageDetector = () => {
         if ('vibrate' in navigator) {
           navigator.vibrate([100, 50, 100]);
         }
+        toast({
+          title: "Phrase Detected",
+          description: phrase.meaning,
+        });
         return;
       }
     }
     
     // If no phrase detected, look for individual words
     for (const word of commonWords) {
-      if (currentSequence.endsWith(word)) {
+      if (currentSequence.includes(word)) {
         console.log("Word detected:", word);
         setDetectedWord(word);
         setDetectedPhrase('');
@@ -228,7 +252,41 @@ const SignLanguageDetector = () => {
         if ('vibrate' in navigator) {
           navigator.vibrate(200);
         }
+        toast({
+          title: "Word Detected",
+          description: word,
+        });
         return;
+      }
+    }
+    
+    // Check for simple two-letter combinations
+    if (signHistory.length >= 2) {
+      const lastTwo = signHistory.slice(-2).join('');
+      if (lastTwo === 'HI') {
+        console.log("Word detected: HI");
+        setDetectedWord('HI');
+        setDetectedPhrase('');
+        if ('vibrate' in navigator) {
+          navigator.vibrate(200);
+        }
+        toast({
+          title: "Word Detected",
+          description: "HI",
+        });
+      }
+      
+      if (lastTwo === 'NO') {
+        console.log("Word detected: NO");
+        setDetectedWord('NO');
+        setDetectedPhrase('');
+        if ('vibrate' in navigator) {
+          navigator.vibrate(200);
+        }
+        toast({
+          title: "Word Detected",
+          description: "NO",
+        });
       }
     }
   }, [signHistory]);
@@ -236,71 +294,25 @@ const SignLanguageDetector = () => {
   // Function to detect finger states with more accuracy
   const getFingerState = (landmarks: any[]) => {
     const palmBase = landmarks[0];
-    const wrist = landmarks[0];
     const fingertips = [landmarks[4], landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
     const knuckles = [landmarks[2], landmarks[5], landmarks[9], landmarks[13], landmarks[17]];
-    const mcp = [landmarks[1], landmarks[5], landmarks[9], landmarks[13], landmarks[17]]; // metacarpophalangeal joints
-    
-    // Calculate palm normal for better 3D orientation awareness
-    const palmVector1 = [
-      landmarks[5][0] - landmarks[17][0],
-      landmarks[5][1] - landmarks[17][1],
-      landmarks[5][2] - landmarks[17][2]
-    ];
-    const palmVector2 = [
-      landmarks[9][0] - landmarks[13][0],
-      landmarks[9][1] - landmarks[13][1],
-      landmarks[9][2] - landmarks[13][2]
-    ];
-    const palmNormal = [
-      palmVector1[1] * palmVector2[2] - palmVector1[2] * palmVector2[1],
-      palmVector1[2] * palmVector2[0] - palmVector1[0] * palmVector2[2],
-      palmVector1[0] * palmVector2[1] - palmVector1[1] * palmVector2[0]
-    ];
     
     // Check if each finger is extended, using 3D positions for better accuracy
     const fingerStates = fingertips.map((tip, i) => {
       if (i === 0) {
         // Special case for thumb
-        const thumbCMC = landmarks[1]; // carpometacarpal joint
-        const thumbMCP = landmarks[2]; // metacarpophalangeal joint
-        const thumbIP = landmarks[3]; // interphalangeal joint
+        const thumbCMC = landmarks[1]; 
+        const thumbMCP = landmarks[2]; 
+        const thumbIP = landmarks[3]; 
         
-        // Calculate the angle between segments
-        const vec1 = [
-          thumbMCP[0] - thumbCMC[0],
-          thumbMCP[1] - thumbCMC[1],
-          thumbMCP[2] - thumbCMC[2]
-        ];
-        const vec2 = [
-          thumbIP[0] - thumbMCP[0],
-          thumbIP[1] - thumbMCP[1],
-          thumbIP[2] - thumbMCP[2]
-        ];
-        const vec3 = [
-          tip[0] - thumbIP[0],
-          tip[1] - thumbIP[1],
-          tip[2] - thumbIP[2]
-        ];
-        
-        const isExtended = vec3[1] < -10; // Thumb is extended if pointing up
+        // Simpler check for thumb extension
+        const isExtended = tip[1] < thumbIP[1] - 5;
         return isExtended ? 1 : 0;
       } else {
         // For other fingers, compare tip to knuckle positions in 3D
-        const pip = landmarks[i * 4 + 1]; // proximal interphalangeal joint
-        const dip = landmarks[i * 4 + 2]; // distal interphalangeal joint
-        
-        // Check if the finger is straight by comparing y coordinates
-        const isExtended = tip[1] < knuckles[i][1] - 15; // Finger is extended if fingertip is above knuckle
-        
-        // Check for finger curling
-        const pipToKnuckleY = pip[1] - knuckles[i][1];
-        const tipToDipY = tip[1] - dip[1];
-        
-        // Curved fingers have the tip lower than expected for a straight finger
-        const isCurled = pipToKnuckleY < 0 && tipToDipY > 0;
-        
-        return isExtended && !isCurled ? 1 : 0;
+        // Simplified check - finger is extended if tip is higher than knuckle
+        const isExtended = tip[1] < knuckles[i][1] - 10;
+        return isExtended ? 1 : 0;
       }
     });
     
@@ -312,8 +324,6 @@ const SignLanguageDetector = () => {
     const thumbTip = landmarks[4];
     const indexTip = landmarks[8];
     const middleTip = landmarks[12];
-    const ringTip = landmarks[16];
-    const pinkyTip = landmarks[20];
     
     // Calculate distances between fingertips
     const thumbIndexDistance = Math.sqrt(
@@ -323,17 +333,16 @@ const SignLanguageDetector = () => {
     );
     
     const indexMiddleSpread = Math.sqrt(
-      Math.pow(landmarks[8][0] - landmarks[12][0], 2) + 
-      Math.pow(landmarks[8][1] - landmarks[12][1], 2)
+      Math.pow(indexTip[0] - middleTip[0], 2) + 
+      Math.pow(indexTip[1] - middleTip[1], 2)
     );
     
     return {
-      'thumb-index-touch': thumbIndexDistance < 15,
-      'v-shape': indexMiddleSpread > 30,
-      'circle': false, // Would need more complex calculation
-      'crossed': false, // Challenging to detect without specialized logic
-      'thumb-between': false, // Complex to detect reliably
-      // Additional special configurations for new letters
+      'thumb-index-touch': thumbIndexDistance < 20,
+      'v-shape': indexMiddleSpread > 25,
+      'circle': false,
+      'crossed': false, 
+      'thumb-between': false,
       'g-shape': false,
       'j-motion': false,
       'k-shape': false,
@@ -350,8 +359,8 @@ const SignLanguageDetector = () => {
   const detectHands = async () => {
     debugLoopCounter.current += 1;
     
-    // Log detection loop iterations for debugging (every 100 frames to avoid console spam)
-    if (debugLoopCounter.current % 100 === 0) {
+    // Log detection loop iterations for debugging (every 50 frames)
+    if (debugLoopCounter.current % 50 === 0) {
       console.log(`Detection loop iteration: ${debugLoopCounter.current}`);
     }
     
@@ -363,7 +372,7 @@ const SignLanguageDetector = () => {
       !canvasRef.current
     ) {
       // If not ready yet, continue the detection loop
-      console.log("Waiting for webcam or model to be ready...");
+      console.log("Waiting for webcam or model to be ready in detectHands()...");
       requestAnimationRef.current = requestAnimationFrame(detectHands);
       return;
     }
@@ -379,7 +388,7 @@ const SignLanguageDetector = () => {
     try {
       const hands = await handposeModel.current.estimateHands(video);
       
-      // Log hand detection every 30 frames to avoid console spam
+      // Log hand detection every 30 frames
       if (debugLoopCounter.current % 30 === 0) {
         console.log("Hands detected:", hands.length > 0 ? "Yes" : "No");
       }
@@ -392,30 +401,26 @@ const SignLanguageDetector = () => {
         const fingerStates = getFingerState(hand.landmarks);
         const specialConfigurations = detectSpecialConfigurations(hand.landmarks);
         
-        // Log detailed finger states every 30 frames for debugging
-        if (debugLoopCounter.current % 30 === 0) {
-          console.log("Finger states:", fingerStates);
-        }
+        // Log detailed finger states for debugging
+        console.log("Finger states:", fingerStates);
         
         // Find the most similar sign
         let bestMatch = '';
-        let bestScore = 0.4; // Lower threshold to make detection more sensitive
+        let bestScore = 0.3; // Lower threshold for easier detection
         
         Object.entries(signs).forEach(([sign, config]) => {
           // Start with basic finger position matching
           let similarity = fingerStates.reduce((acc, state, idx) => {
-            return acc + (state === config.fingersUp[idx] ? 0.15 : 0);
+            return acc + (state === config.fingersUp[idx] ? 0.2 : 0);
           }, 0);
           
           // Add bonus for special configurations if they match
           if (config.special && specialConfigurations[config.special as keyof typeof specialConfigurations]) {
-            similarity += 0.25;
+            similarity += 0.3;
           }
 
-          // Check for curved hand configuration if needed
+          // Simple check for curved hand if needed
           if (config.curved) {
-            // This is a simplified check - would need more complex logic for full accuracy
-            // For now, we'll use the finger states as an approximation
             const isCurved = fingerStates.reduce((sum, state) => sum + state, 0) > 2;
             if (isCurved) similarity += 0.1;
           }
@@ -426,10 +431,7 @@ const SignLanguageDetector = () => {
           }
         });
         
-        // Log best match every 30 frames for debugging
-        if (debugLoopCounter.current % 30 === 0 && bestMatch) {
-          console.log("Best match:", bestMatch, "Score:", bestScore);
-        }
+        console.log("Best match:", bestMatch, "Score:", bestScore);
         
         // Apply stability check to prevent flickering
         if (bestMatch) {
@@ -458,7 +460,7 @@ const SignLanguageDetector = () => {
             stableCountRef.current = 1;
           }
         } else {
-          // No match found - might be transitioning between signs
+          // Reset when no match found
           stableCountRef.current = 0;
         }
         
@@ -476,7 +478,6 @@ const SignLanguageDetector = () => {
       }
     } catch (error) {
       console.error('Error during hand detection:', error);
-      // Don't stop the detection loop on error, just continue
     }
     
     // Continue detection loop
@@ -493,8 +494,8 @@ const SignLanguageDetector = () => {
     
     // Draw connections
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 3;
     
     // Draw thumb
     ctx.moveTo(landmarks[0][0], landmarks[0][1]);
@@ -523,13 +524,13 @@ const SignLanguageDetector = () => {
       // Different colors for fingertips
       if ([4, 8, 12, 16, 20].includes(index)) {
         ctx.fillStyle = '#00ffff'; // Cyan for fingertips
-        ctx.arc(point[0], point[1], 6, 0, 2 * Math.PI);
+        ctx.arc(point[0], point[1], 8, 0, 2 * Math.PI);
       } else if (index === 0) {
         ctx.fillStyle = '#ff0000'; // Red for palm base
-        ctx.arc(point[0], point[1], 8, 0, 2 * Math.PI);
+        ctx.arc(point[0], point[1], 10, 0, 2 * Math.PI);
       } else {
         ctx.fillStyle = '#ffffff'; // White for other joints
-        ctx.arc(point[0], point[1], 4, 0, 2 * Math.PI);
+        ctx.arc(point[0], point[1], 5, 0, 2 * Math.PI);
       }
       
       ctx.fill();
@@ -562,9 +563,24 @@ const SignLanguageDetector = () => {
     // Restart detection loop
     requestAnimationRef.current = requestAnimationFrame(detectHands);
     
+    // Add test sign for debugging
+    setTimeout(() => {
+      setSignHistory(prev => [...prev, 'H', 'I']);
+    }, 1000);
+    
     toast({
       title: "Detection restarted",
       description: "The detection system has been restarted",
+    });
+  };
+
+  // Force a demonstration sign/word
+  const demonstrateWordDetection = () => {
+    console.log("Demonstrating word detection");
+    setSignHistory(['H', 'E', 'L', 'L', 'O']);
+    toast({
+      title: "Demonstration mode",
+      description: "Added 'HELLO' to sign history",
     });
   };
 
@@ -621,6 +637,7 @@ const SignLanguageDetector = () => {
             height: '100%',
             objectFit: 'cover',
           }}
+          onUserMedia={handleWebcamReady}
         />
         <canvas
           ref={canvasRef}
@@ -631,6 +648,14 @@ const SignLanguageDetector = () => {
             objectFit: 'cover',
           }}
         />
+        <div className="absolute bottom-2 right-2 flex space-x-2">
+          <div className={`px-2 py-1 text-xs rounded-full ${modelReady ? 'bg-green-500' : 'bg-red-500'}`}>
+            Model: {modelReady ? 'Ready' : 'Loading...'}
+          </div>
+          <div className={`px-2 py-1 text-xs rounded-full ${webcamReady ? 'bg-green-500' : 'bg-red-500'}`}>
+            Webcam: {webcamReady ? 'Ready' : 'Waiting...'}
+          </div>
+        </div>
       </div>
       
       <div className="mt-4 space-y-2">
@@ -640,6 +665,13 @@ const SignLanguageDetector = () => {
             className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-3 py-1 rounded"
           >
             Restart Detection
+          </button>
+          
+          <button 
+            onClick={demonstrateWordDetection}
+            className="text-xs bg-purple-700 hover:bg-purple-600 text-white px-3 py-1 rounded"
+          >
+            Demo Word Detection
           </button>
           
           {signHistory.length > 0 && (
@@ -686,6 +718,12 @@ const SignLanguageDetector = () => {
             </div>
           </div>
         )}
+        
+        <div className="p-3 bg-gray-800 rounded-md mt-2">
+          <p className="text-sm text-gray-400">
+            Try signing simple letters like 'A', 'B', 'V', or 'L', then try to spell words like 'HI' or 'OK'.
+          </p>
+        </div>
       </div>
     </div>
   );

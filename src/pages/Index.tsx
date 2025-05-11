@@ -1,13 +1,40 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import SignLanguageDetector from '@/components/SignLanguageDetector';
 import SimplifiedHandFeatures from '@/components/SimplifiedHandFeatures';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from '@/components/ui/use-toast';
 
 const Index = () => {
   const [isDetecting, setIsDetecting] = useState(false);
   const [activeComponent, setActiveComponent] = useState<'standard' | 'fpga'>('standard');
+  const [detectionStarted, setDetectionStarted] = useState(false);
+
+  // Start detection automatically after a short delay when page loads
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!detectionStarted && activeComponent === 'standard') {
+        setIsDetecting(true);
+        setDetectionStarted(true);
+        toast({
+          title: "Detection started automatically",
+          description: "Position your hand in front of the camera"
+        });
+      }
+    }, 1500);
+    
+    return () => clearTimeout(timer);
+  }, [detectionStarted, activeComponent]);
+
+  // Switch mode handler with state reset
+  const handleModeSwitch = (mode: 'standard' | 'fpga') => {
+    setActiveComponent(mode);
+    if (mode === 'standard') {
+      setIsDetecting(true);
+    }
+  };
 
   // Full alphabet of supported signs
   const supportedSigns = [
@@ -92,13 +119,13 @@ const Index = () => {
         <div className="bg-gray-800 rounded-lg p-1 flex">
           <button 
             className={`px-4 py-2 rounded-md transition ${activeComponent === 'standard' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-            onClick={() => setActiveComponent('standard')}
+            onClick={() => handleModeSwitch('standard')}
           >
             Standard Version
           </button>
           <button 
             className={`px-4 py-2 rounded-md transition ${activeComponent === 'fpga' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
-            onClick={() => setActiveComponent('fpga')}
+            onClick={() => handleModeSwitch('fpga')}
           >
             FPGA-Friendly Version
           </button>
@@ -133,7 +160,7 @@ const Index = () => {
           <CardFooter className="flex justify-center">
             <Button 
               onClick={() => setIsDetecting(!isDetecting)}
-              className="bg-blue-600 hover:bg-blue-700"
+              className={isDetecting ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}
             >
               {isDetecting ? "Stop Detection" : "Start Detection"}
             </Button>
