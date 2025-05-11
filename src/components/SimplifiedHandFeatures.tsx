@@ -1,5 +1,7 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import Webcam from 'react-webcam';
+import { toast } from "@/hooks/use-toast";
 
 // This component demonstrates a simplified approach to hand feature extraction
 // that would be more suitable for potential FPGA implementation
@@ -7,26 +9,76 @@ const SimplifiedHandFeatures = () => {
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [detectionStats, setDetectionStats] = useState({
+    framesProcessed: 0,
+    handsDetected: 0,
+    avgProcessingTime: 0
+  });
   
   // Hand detection parameters that could be implemented in hardware
-  const thresholds = {
-    skinLowerHSV: [0, 0.2, 0.4],  // Lower HSV bounds for skin detection
-    skinUpperHSV: [0.1, 0.6, 1.0], // Upper HSV bounds for skin detection
-    blobMinSize: 2000,             // Minimum blob size to be considered a hand
-  };
+  // These are adjustable thresholds for different lighting conditions
+  const [thresholds, setThresholds] = useState({
+    skinLowerHSV: [0, 0.15, 0.4],  // Lower HSV bounds for skin detection
+    skinUpperHSV: [0.1, 0.7, 1.0], // Upper HSV bounds for skin detection
+    blobMinSize: 1500,             // Minimum blob size to be considered a hand
+  });
 
   useEffect(() => {
+    // Check webcam permission when component mounts
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(() => {
+          console.log("Camera permission granted");
+        })
+        .catch((err) => {
+          console.error("Camera permission denied:", err);
+          toast({
+            title: "Camera access required",
+            description: "Please allow camera access to use the hand detection feature",
+            variant: "destructive",
+          });
+        });
+    }
+    
+    return () => {
+      // Clean up when component unmounts
+      setIsProcessing(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    let processingInterval: NodeJS.Timeout | null = null;
+    let frameCount = 0;
+    let totalProcessingTime = 0;
+    let handDetectionCount = 0;
+    
     if (isProcessing) {
       // Start the processing loop when enabled
-      const processingInterval = setInterval(() => {
-        processFrame();
-      }, 100); // 10 fps for demonstration purposes
+      processingInterval = setInterval(() => {
+        const startTime = performance.now();
+        const handDetected = processFrame();
+        const endTime = performance.now();
+        
+        // Update statistics
+        frameCount++;
+        totalProcessingTime += (endTime - startTime);
+        if (handDetected) handDetectionCount++;
+        
+        // Update stats every 10 frames
+        if (frameCount % 10 === 0) {
+          setDetectionStats({
+            framesProcessed: frameCount,
+            handsDetected: handDetectionCount,
+            avgProcessingTime: totalProcessingTime / frameCount
+          });
+        }
+      }, 50); // 20 fps for better performance
       
       return () => {
-        clearInterval(processingInterval);
+        if (processingInterval) clearInterval(processingInterval);
       };
     }
-  }, [isProcessing]);
+  }, [isProcessing, thresholds]);
 
   // Function to convert RGB to HSV - implementable in hardware
   const rgbToHsv = (r: number, g: number, b: number) => {
@@ -57,7 +109,7 @@ const SimplifiedHandFeatures = () => {
   };
 
   // Extract hand features using simplified algorithms that could be adapted for FPGA
-  const processFrame = () => {
+  const processFrame = (): boolean => {
     if (
       webcamRef.current?.video &&
       webcamRef.current.video.readyState === 4 &&
@@ -67,7 +119,7 @@ const SimplifiedHandFeatures = () => {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       
-      if (!ctx) return;
+      if (!ctx) return false;
       
       // Set canvas dimensions to match video
       canvas.width = video.videoWidth;
@@ -75,6 +127,12 @@ const SimplifiedHandFeatures = () => {
       
       // Draw the current video frame to canvas
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Flip the image horizontally for more intuitive interaction
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+      ctx.restore();
       
       // Get image data for processing
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -117,8 +175,14 @@ const SimplifiedHandFeatures = () => {
         
         // Visualize the extracted features
         visualizeFeatures(ctx, handRegion, features);
+        return true;
       }
+      
+      // No hand detected, clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
+    return false;
   };
   
   // Simple spatial filter for denoising (equivalent to erosion/dilation)
@@ -233,10 +297,6 @@ const SimplifiedHandFeatures = () => {
   const visualizeFeatures = (ctx: CanvasRenderingContext2D, handRegion: { pixels: number[], size: number, centroid: { x: number, y: number } }, features: any) => {
     const { width, height } = ctx.canvas;
     
-    // Draw binary mask
-    const imageData = ctx.getImageData(0, 0, width, height);
-    const data = imageData.data;
-    
     // Reset canvas
     ctx.clearRect(0, 0, width, height);
     
@@ -279,12 +339,45 @@ const SimplifiedHandFeatures = () => {
     ctx.fillText(`Area: ${handRegion.size}px`, 10, 90);
   };
 
+  // Reset detection parameters to defaults
+  const resetParameters = () => {
+    setThresholds({
+      skinLowerHSV: [0, 0.15, 0.4],
+      skinUpperHSV: [0.1, 0.7, 1.0],
+      blobMinSize: 1500,
+    });
+  };
+
+  // Adjust for different lighting conditions
+  const adjustForLighting = (preset: 'bright' | 'normal' | 'dim') => {
+    switch (preset) {
+      case 'bright':
+        setThresholds({
+          skinLowerHSV: [0, 0.1, 0.5],
+          skinUpperHSV: [0.1, 0.5, 1.0],
+          blobMinSize: 1500,
+        });
+        break;
+      case 'dim':
+        setThresholds({
+          skinLowerHSV: [0, 0.2, 0.3],
+          skinUpperHSV: [0.15, 0.8, 0.9],
+          blobMinSize: 1200,
+        });
+        break;
+      default:
+        resetParameters();
+    }
+  };
+
   return (
     <div className="relative">
       <div className="relative aspect-video bg-black rounded-md overflow-hidden">
         <Webcam
           ref={webcamRef}
           muted
+          mirrored={true} // Mirror the webcam for more intuitive interaction
+          audio={false}
           style={{
             position: 'absolute',
             width: '100%',
@@ -305,15 +398,67 @@ const SimplifiedHandFeatures = () => {
       
       <div className="mt-4 space-y-4">
         <div className="flex justify-between items-center">
-          <p className="text-lg font-semibold text-blue-400">
+          <p className="text-lg font-semibold text-green-400">
             FPGA-Friendly Hand Detection
           </p>
-          <button 
-            onClick={() => setIsProcessing(!isProcessing)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-          >
-            {isProcessing ? 'Pause Processing' : 'Start Processing'}
-          </button>
+          <div className="space-x-2">
+            <button 
+              onClick={() => setIsProcessing(!isProcessing)}
+              className={`px-4 py-2 rounded ${isProcessing ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} text-white`}
+            >
+              {isProcessing ? 'Pause Processing' : 'Start Processing'}
+            </button>
+            <button
+              onClick={resetParameters}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+            >
+              Reset Params
+            </button>
+          </div>
+        </div>
+
+        {isProcessing && (
+          <div className="bg-gray-700 p-4 rounded-md">
+            <p className="text-gray-200 mb-2">Detection Statistics:</p>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-gray-800 p-2 rounded">
+                <p className="text-gray-400 text-sm">Frames Processed</p>
+                <p className="text-white font-bold">{detectionStats.framesProcessed}</p>
+              </div>
+              <div className="bg-gray-800 p-2 rounded">
+                <p className="text-gray-400 text-sm">Hands Detected</p>
+                <p className="text-white font-bold">{detectionStats.handsDetected}</p>
+              </div>
+              <div className="bg-gray-800 p-2 rounded">
+                <p className="text-gray-400 text-sm">Avg. Processing Time</p>
+                <p className="text-white font-bold">{detectionStats.avgProcessingTime.toFixed(2)}ms</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        <div className="bg-gray-800 p-4 rounded-md">
+          <p className="text-gray-300 mb-2">Lighting Conditions:</p>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => adjustForLighting('bright')}
+              className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm"
+            >
+              Bright Room
+            </button>
+            <button
+              onClick={() => adjustForLighting('normal')}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
+            >
+              Normal Lighting
+            </button>
+            <button
+              onClick={() => adjustForLighting('dim')}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-sm"
+            >
+              Dim Room
+            </button>
+          </div>
         </div>
         
         <div className="bg-gray-800 p-4 rounded-md">
@@ -341,3 +486,4 @@ const SimplifiedHandFeatures = () => {
 };
 
 export default SimplifiedHandFeatures;
+
