@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
@@ -111,6 +112,9 @@ const SignLanguageDetector = () => {
   const stableCountRef = useRef<number>(0);
   const STABILITY_THRESHOLD = 5; // Number of consistent frames to consider a sign stable
   
+  // Add debug counter to track detection loops
+  const debugLoopCounter = useRef<number>(0);
+  
   // Initialize TensorFlow.js and the handpose model
   useEffect(() => {
     const loadModels = async () => {
@@ -128,10 +132,10 @@ const SignLanguageDetector = () => {
         
         // Load the handpose model with correct configuration options
         const model = await handpose.load({
-          detectionConfidence: 0.8,
-          maxContinuousChecks: 5,
+          detectionConfidence: 0.7, // Lower threshold to detect hands more easily
+          maxContinuousChecks: 10,
           iouThreshold: 0.3,
-          scoreThreshold: 0.75,
+          scoreThreshold: 0.6, // Lower threshold to be more sensitive
         });
         
         console.log("Handpose model loaded successfully");
@@ -139,7 +143,12 @@ const SignLanguageDetector = () => {
         
         // Once model is loaded, start the detection loop
         setIsModelLoading(false);
-        detectHands();
+        
+        // Start detection loop explicitly
+        if (!requestAnimationRef.current) {
+          console.log("Starting detection loop");
+          requestAnimationRef.current = requestAnimationFrame(detectHands);
+        }
         
         toast({
           title: "Model loaded successfully",
@@ -177,6 +186,7 @@ const SignLanguageDetector = () => {
       // Cleanup function to prevent memory leaks
       if (requestAnimationRef.current) {
         cancelAnimationFrame(requestAnimationRef.current);
+        requestAnimationRef.current = null;
       }
       setSignHistory([]);
       lastSignRef.current = '';
@@ -188,12 +198,16 @@ const SignLanguageDetector = () => {
   useEffect(() => {
     if (signHistory.length === 0) return;
     
+    console.log("Current sign history:", signHistory);
+    
     // Look for common words in the sign sequence
     const currentSequence = signHistory.join('');
+    console.log("Current sequence:", currentSequence);
     
     // Check for phrases first (longer matches)
     for (const phrase of conversationPhrases) {
       if (currentSequence.endsWith(phrase.text)) {
+        console.log("Phrase detected:", phrase.meaning);
         setDetectedWord('');
         setDetectedPhrase(phrase.meaning);
         // Vibrate if available to give haptic feedback
@@ -207,6 +221,7 @@ const SignLanguageDetector = () => {
     // If no phrase detected, look for individual words
     for (const word of commonWords) {
       if (currentSequence.endsWith(word)) {
+        console.log("Word detected:", word);
         setDetectedWord(word);
         setDetectedPhrase('');
         // Vibrate if available to give haptic feedback
@@ -333,6 +348,13 @@ const SignLanguageDetector = () => {
   
   // Function to detect hands and predict signs
   const detectHands = async () => {
+    debugLoopCounter.current += 1;
+    
+    // Log detection loop iterations for debugging (every 100 frames to avoid console spam)
+    if (debugLoopCounter.current % 100 === 0) {
+      console.log(`Detection loop iteration: ${debugLoopCounter.current}`);
+    }
+    
     if (
       !handposeModel.current || 
       !webcamRef.current || 
@@ -341,6 +363,7 @@ const SignLanguageDetector = () => {
       !canvasRef.current
     ) {
       // If not ready yet, continue the detection loop
+      console.log("Waiting for webcam or model to be ready...");
       requestAnimationRef.current = requestAnimationFrame(detectHands);
       return;
     }
@@ -355,7 +378,11 @@ const SignLanguageDetector = () => {
     // Detect hands in the video stream
     try {
       const hands = await handposeModel.current.estimateHands(video);
-      console.log("Hands detected:", hands.length > 0 ? "Yes" : "No");
+      
+      // Log hand detection every 30 frames to avoid console spam
+      if (debugLoopCounter.current % 30 === 0) {
+        console.log("Hands detected:", hands.length > 0 ? "Yes" : "No");
+      }
       
       // Process the hand data to identify signs
       if (hands && hands.length > 0) {
@@ -365,11 +392,14 @@ const SignLanguageDetector = () => {
         const fingerStates = getFingerState(hand.landmarks);
         const specialConfigurations = detectSpecialConfigurations(hand.landmarks);
         
-        console.log("Finger states:", fingerStates);
+        // Log detailed finger states every 30 frames for debugging
+        if (debugLoopCounter.current % 30 === 0) {
+          console.log("Finger states:", fingerStates);
+        }
         
         // Find the most similar sign
         let bestMatch = '';
-        let bestScore = 0.5; // Increased threshold for better accuracy
+        let bestScore = 0.4; // Lower threshold to make detection more sensitive
         
         Object.entries(signs).forEach(([sign, config]) => {
           // Start with basic finger position matching
@@ -396,7 +426,10 @@ const SignLanguageDetector = () => {
           }
         });
         
-        console.log("Best match:", bestMatch, "Score:", bestScore);
+        // Log best match every 30 frames for debugging
+        if (debugLoopCounter.current % 30 === 0 && bestMatch) {
+          console.log("Best match:", bestMatch, "Score:", bestScore);
+        }
         
         // Apply stability check to prevent flickering
         if (bestMatch) {
@@ -404,11 +437,13 @@ const SignLanguageDetector = () => {
             stableCountRef.current += 1;
             if (stableCountRef.current >= STABILITY_THRESHOLD) {
               if (detectedSign !== bestMatch) {
+                console.log("Stable sign detected:", bestMatch, "with confidence:", bestScore);
                 setDetectedSign(bestMatch);
                 setConfidence(bestScore);
                 
                 // Only add to history if it's a new sign (not just repeating)
                 if (signHistory.length === 0 || signHistory[signHistory.length - 1] !== bestMatch) {
+                  console.log("Adding to sign history:", bestMatch);
                   setSignHistory(prev => {
                     // Keep just the last 10 signs for word detection
                     const updatedHistory = [...prev, bestMatch].slice(-10);
@@ -512,6 +547,27 @@ const SignLanguageDetector = () => {
     });
   };
 
+  // Function to manually restart detection if it seems stalled
+  const restartDetection = () => {
+    console.log("Manually restarting detection");
+    if (requestAnimationRef.current) {
+      cancelAnimationFrame(requestAnimationRef.current);
+      requestAnimationRef.current = null;
+    }
+    
+    // Reset state
+    stableCountRef.current = 0;
+    debugLoopCounter.current = 0;
+    
+    // Restart detection loop
+    requestAnimationRef.current = requestAnimationFrame(detectHands);
+    
+    toast({
+      title: "Detection restarted",
+      description: "The detection system has been restarted",
+    });
+  };
+
   return (
     <div className="relative">
       {isModelLoading && (
@@ -578,6 +634,24 @@ const SignLanguageDetector = () => {
       </div>
       
       <div className="mt-4 space-y-2">
+        <div className="flex justify-between">
+          <button 
+            onClick={restartDetection}
+            className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-3 py-1 rounded"
+          >
+            Restart Detection
+          </button>
+          
+          {signHistory.length > 0 && (
+            <button 
+              onClick={clearSignHistory}
+              className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1 rounded"
+            >
+              Clear History
+            </button>
+          )}
+        </div>
+        
         {detectedSign && (
           <div className="p-3 bg-blue-900 bg-opacity-50 rounded-md">
             <p className="font-semibold">Detected Sign:</p>
@@ -602,15 +676,7 @@ const SignLanguageDetector = () => {
         
         {signHistory.length > 0 && (
           <div className="p-3 bg-gray-800 rounded-md">
-            <div className="flex justify-between items-center mb-2">
-              <p className="font-semibold">Sign Sequence:</p>
-              <button 
-                onClick={clearSignHistory}
-                className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded"
-              >
-                Clear
-              </button>
-            </div>
+            <p className="font-semibold mb-2">Sign Sequence:</p>
             <div className="flex flex-wrap gap-1">
               {signHistory.map((sign, index) => (
                 <span key={index} className="bg-gray-700 text-gray-300 px-2 py-1 rounded text-sm">
