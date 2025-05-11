@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import Webcam from 'react-webcam';
 import { toast } from "@/hooks/use-toast";
@@ -46,6 +45,11 @@ const SimplifiedHandFeatures = () => {
   const gestureHistory = useRef<string[]>([]);
   const maxHistoryLength = 10;
   const stabilityCutoff = 0.6; // 60% agreement required for stable detection
+  
+  // Letter cooldown to prevent spamming
+  const [letterCooldown, setLetterCooldown] = useState(false);
+  const cooldownTime = 2000; // 2 seconds cooldown
+  const lastLetterTime = useRef<number>(0);
 
   useEffect(() => {
     // Check webcam permission when component mounts
@@ -141,6 +145,38 @@ const SimplifiedHandFeatures = () => {
     return [h, s, v];
   };
 
+  // Add a new letter to the word with cooldown
+  const addLetterToWord = (letter: string) => {
+    const currentTime = Date.now();
+    
+    // Check if we're in cooldown period
+    if (currentTime - lastLetterTime.current < cooldownTime) {
+      console.log("Letter cooldown active, ignoring:", letter);
+      return;
+    }
+    
+    // Update last letter time and add the letter
+    lastLetterTime.current = currentTime;
+    setLetterCooldown(true);
+    
+    // Add the letter to detected letters
+    setDetectedLetters(prev => [...prev, letter]);
+    
+    // Audio feedback for letter detection
+    const audio = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAAABMSVNUHAAAAGluZm9JTkFNRQAAAEJlZXAAA0lDT1BZcmlnaHQgqSAyMDAzIEFkb2JlIFN5c3RlbXMgSW5jLgBkYXRhNAYAAAD//v38+/r594mW/e+RZUPzLsq39Lj/F7X40anzA/z69ff2+PgHCvrlJr9GmZze+w3i5eDF/9no/k1a9QaiPVNgLXmp8fDZ3en39Pvm+gT/+/z6+/r7/fz9/f79EP3r59n5beGJ0su5Za9Vnm2TmYdreHiDh2xXU3WWrbzV78HFJ9rk7Pn67QgQBvkHrWiY4/57aXY4R0VRSFBcZ32OiH6Je3Kigm5ci4Sleq/O3N300uh9/jpxRYJsfo+d7xQCZ5gFAg4UBAn++v5ZAQz58hgJhL++fBgYTYCkSzhA6hcH/3J+9BwZK+ww7/cbFmcXj0E3TXXBrcZr49dxlWyBgnTQ78NyX3hnkqLz8m5aYshYlLQHSFhGqO+39hYl+Lc8aywq0OIIBIC0/SE/tP8ICO1/nmglJkdARFcla13yd0IyFvvr/hnuQRq867ZuLPw+6wb6IP1oW4VlA/NrOxv0rzIl+V0WDiT+iQeVGPJh1GNhi3GzYlUCqg9bTAhVktrVmalLlpCNdIlzf25vkrTWzQfn9RX+/Q0SFh8kJicmIBsZFxUUERAMCwsKCwoJCQcGBgcJCwsLDAsLCw0QERERERETExMTExMTExMTExMTEhISExITExMSEhMTExMSEhISEhISEhERERERERERERERIREREREREREBEQEBEQEBAQDw4PDg8ODg8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw4ODg4ODg4ODQ0NDQ0NDAwMDAwMDAwMCwsLCgsLCgsLCwsLCgsLCgsLCgoKCgoKCgkKCQoJCQkJCQkJCQkJCQoJCQoJCgoKCQoKCQoKCgoKCgoKCgoKCgsKCgoKCgoKCgsLCwsLCwsLCwsLCwsMDAwMDAwMDAwNDQ0NDQ4NDg4ODg4PDw8PDw8PEBAQEBAQEBIREhESERIREhISEhITExMTExQTFBMUFBQUFBQUFBQUFBQUFBQVFRUVFRYWFhYWFhYWFhYWFhYWFhYWFhYYGBYWFhYXFhcXFxcXFxcYFxgYGBgYGBkZGRoZGRkaGhobGxscGxscHR0dHR0eHR4eHh8eHx4fIB8fHx8gICEhICEhISEhIiIjIyMjIyMjIyMjIyMjIyMjIyMjIyMiIiIiIiEiISAhICAfIB8fIB8fHx4fHh4dHR0dHB0cHBwcGxscGxsaGxobGxsaGhkZGRkZGRkZGRkaGhoZGRkZGRkZGRkaGRoZGRkZGRkZGRkaGRoZGRkaGhoZGhkZGhobGhsbGhsaGxobGhsaGhoaGxobGhsaGxobGxobGhsaGxscHBscGxscHBscGxsbGxwbHBscGxwdHB0cHRwdHR0dHR0dHR0dHR0dHR0dHR4dHR0dHh4eHh4eHh4eHh4eHR0dHh0eHR0eHR4dHh0eHR4dHh0eHR4dHR0dHR0dHR0dHR0dHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcGxsbGxsbGxsbGxsbGxsbGxsbGxsaGhsaGhsaGhoaGhoaGhoaGhoZGhoaGRoZGRkZGRkZGRoZGRkZGRoZGhoZGRkZGRkZGRkZGRkZGRoZGhkaGhobGhsaGxobGxsbGxsbGxwcGxwcHBwcHR0dHR0dHR0eHh4eHh4eHh8fHx8AoEz0TX+lWhMUXSc+1AltoAqnTQ==");
+    audio.play();
+    
+    // Visual feedback by showing cooldown indicator
+    setTimeout(() => {
+      setLetterCooldown(false);
+    }, cooldownTime);
+    
+    toast({
+      title: "Letter detected",
+      description: `Added '${letter}' to current word`,
+    });
+  };
+
   // Extract hand features using simplified algorithms that could be adapted for FPGA
   const processFrame = (): boolean => {
     if (
@@ -214,12 +250,13 @@ const SimplifiedHandFeatures = () => {
           updateGestureHistory(gesture.name);
           setCurrentGesture(gesture);
           
-          // Add to detected letters if stable
+          // Check for stable gesture and add letter if stable
           const stableGesture = getStableGesture();
-          if (stableGesture && 
-              (detectedLetters.length === 0 || 
-               detectedLetters[detectedLetters.length - 1] !== stableGesture)) {
-            setDetectedLetters(prev => [...prev, stableGesture]);
+          if (stableGesture && !letterCooldown) {
+            // Only add valid letters (not gestures like "?")
+            if (stableGesture !== "?" && stableGesture !== "I LOVE YOU") {
+              addLetterToWord(stableGesture);
+            }
           }
         }
         
@@ -643,6 +680,11 @@ const SimplifiedHandFeatures = () => {
                   {currentGesture.name}
                 </span>
               )}
+              {letterCooldown && (
+                <span className="text-sm text-blue-400">
+                  (cooldown active)
+                </span>
+              )}
             </div>
             <div className="text-right">
               <span className="text-lg font-semibold text-gray-300">
@@ -754,6 +796,7 @@ const SimplifiedHandFeatures = () => {
             <li>Geometric feature extraction (parallel computation in FPGA)</li>
             <li>Simplified finger counting algorithm (implementable with angle binning)</li>
             <li>Basic gesture recognition via lookup table (low complexity)</li>
+            <li>Letter cooldown mechanism (2-second delay between letter detections)</li>
           </ul>
         </div>
       </div>
